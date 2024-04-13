@@ -22,7 +22,7 @@ print("Your Turn")
 app = FastAPI()
 
 
-@app.get("/test-dhl-api")
+@app.get("/")
 async def test_dhl_api():
     async with httpx.AsyncClient() as client:
         try:
