@@ -1,4 +1,5 @@
 import os
+import json
 import xml.etree.ElementTree as ET
 import logging
 
@@ -35,7 +36,9 @@ async def test_dhl_api():
             )
             # Prüfe den Statuscode der Antwort
             if response.status_code == 200:
-                return {"message": "DHL API ist erreichbar."}
+                response_dict = {"message": "DHL API ist erreichbar."}
+                response_dict.update(response.json())
+                return response_dict
             else:
                 return {"message": "DHL API ist nicht erreichbar.", "status_code": response.status_code}
         except httpx.RequestError as e:
