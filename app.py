@@ -6,7 +6,7 @@ import logging
 import pycountry
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 import httpx
 import xmltodict
 
@@ -366,7 +366,7 @@ def rest_to_soap_data(response_statuscode, rest_data):
 
     # Baum in eine Zeichenfolge umwandeln
     xml_str = ET.tostring(envelope, encoding="utf-8")
-    return xml_str.decode("utf-8")
+    return xml_str  # xml_str.decode("utf-8")
 
 
 async def create_shipment(soap_request_data, username, password):
@@ -384,7 +384,7 @@ async def create_shipment(soap_request_data, username, password):
 async def handle_soap_request(request: Request):
     soap_request_data = await request.body()
     soap_request_dict = xmltodict.parse(soap_request_data, encoding="utf-8")
-    logging.debug(f'SOAP Request: {json.dumps(soap_request_dict, indent=2)}')
+    logging.debug(f'SOAP Request DATA: {json.dumps(soap_request_dict, indent=2)}')
 
     envelope = soap_request_dict.get("SOAP-ENV:Envelope")
     if not envelope:
@@ -411,9 +411,12 @@ async def handle_soap_request(request: Request):
 
     if method_name.endswith("CreateShipmentDDRequest"):
         logging.debug(f"SOAP Method: {method_name} - Wird verarbeitet.")
-        response = await create_shipment(method_data, username, password)
-        logging.debug(f"SOAP Response: {response}")
-        return response
+        response_data = await create_shipment(method_data, username, password)
+        logging.debug(f"SOAP Response DATA: {response_data}")
     else:
         # Für alle anderen Methoden, die nicht unterstützt werden oder unbekannt sind
         raise HTTPException(status_code=400, detail=f"Unsupported SOAP method: {method_name}")
+
+    headers = {"Content-Type": "application/xml"}
+    response = Response(content=response_data, media_type="application/xml", headers=headers)
+    return response
