@@ -10,7 +10,12 @@ from fastapi import FastAPI, HTTPException, Request
 import httpx
 import xmltodict
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    filename='logs/my_app.log',  # Pfad zur Log-Datei
+    filemode='a',  # 'a' für append, 'w' zum Überschreiben
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Formatierung der Log-Nachrichten
+    level=logging.DEBUG  # Minimallevel für die Erfassung von Nachrichten
+)
 
 load_dotenv()
 dhl_api_key = os.getenv('DHL_API_KEY')
@@ -19,7 +24,7 @@ dhl_rest_api_orders_url = f"{dhl_rest_api_base_url}orders"
 
 gkp_user = os.getenv('GKP_USER')
 gkp_password = os.getenv('GKP_PASSWORD')
-print("Your Turn")
+
 app = FastAPI()
 
 
@@ -53,7 +58,7 @@ async def create_test_shipment(request: Request):
     return response
 
 
-async def make_rest_api_call(rest_api_url, payload):
+async def make_rest_api_call(rest_api_url, payload, username=None, password=None):
     headers = {
         "accept": "application/json",
         "Accept-Language": "de-DE",
@@ -61,7 +66,10 @@ async def make_rest_api_call(rest_api_url, payload):
         "dhl-api-key": dhl_api_key
     }
 
-    auth = (gkp_user, gkp_password)
+    if username and password:
+        auth = (username, password)
+    else:
+        auth = (gkp_user, gkp_password)
 
     async with httpx.AsyncClient() as client:
         response = await client.post(rest_api_url, json=payload, headers=headers, auth=auth,
@@ -260,13 +268,23 @@ def soap_to_rest_data(xml_data):
 def rest_to_soap_data(response_statuscode, rest_data):
 
     status = rest_data.get("status")
-    status_name = status.get("title").lower()
-    status_code = status.get("statusCode")
+    if status:
+        status_name = status.get("title").lower()
+    else:
+        status_name = rest_data.get("title").lower()
 
     validation_messages = []
 
     if response_statuscode == 200:
         status_code = "0"
+
+    elif response_statuscode == 401:
+        if 'unauthorized' in status_name:
+            status_code = "1001"
+            status_name = 'login failed'
+            validation_messages.append(rest_data.get('detail'))
+        else:
+            raise HTTPException(status_code=401, detail="Unknown 401 Status Code Issue")
     else:
         status_code = "1101"
         status_name = 'Hard validation error occured.'
@@ -274,19 +292,23 @@ def rest_to_soap_data(response_statuscode, rest_data):
         if validation_message:
             validation_message = validation_message.get('validationMessage')
 
-    if rest_data.get("items")[0].get("validationMessages"):
-        for validation_message in rest_data.get("items")[0].get("validationMessages"):
-            message = validation_message.get("validationMessage")
-            if validation_message.get("validationState") == "Warning":
-                validation_messages.append(message)
-            else:
-                validation_messages.insert(0, message)
+    items = rest_data.get("items")
 
-    shipmentNo = rest_data.get("items")[0].get("shipmentNo")
-    if rest_data.get("items")[0].get("label"):
-        labelUrl = rest_data.get("items")[0].get("label").get("url")
-    else:
-        labelUrl = None
+    if items:
+        shipmentNo = items[0].get("shipmentNo")
+        if items[0].get("label"):
+            labelUrl = rest_data.get("items")[0].get("label").get("url")
+        else:
+            labelUrl = None
+
+        if items[0].get("validationMessages"):
+            for validation_message in items[0].get("validationMessages"):
+                message = validation_message.get("validationMessage")
+                if validation_message.get("validationState") == "Warning":
+                    validation_messages.append(message)
+                else:
+                    validation_messages.insert(0, message)
+
 
     # Namensräume definieren
     namespaces = {
@@ -319,17 +341,17 @@ def rest_to_soap_data(response_statuscode, rest_data):
     ET.SubElement(status, "StatusCode").text = status_code
     ET.SubElement(status, "StatusMessage").text = status_name
 
-    # CreationState Element
-    creation_state = ET.SubElement(create_shipment_response, "CreationState")
-    ET.SubElement(creation_state, "StatusCode").text = status_code
-    ET.SubElement(creation_state, "StatusMessage").text = status_name
-    if validation_messages:
-        for validation_message in validation_messages:
-            ET.SubElement(creation_state, "StatusMessage").text = validation_message
-    ET.SubElement(creation_state, "SequenceNumber").text = "1"
-
     # ShipmentNumber Element
-    if shipmentNo:
+    if items:
+        # CreationState Element
+        creation_state = ET.SubElement(create_shipment_response, "CreationState")
+        ET.SubElement(creation_state, "StatusCode").text = status_code
+        ET.SubElement(creation_state, "StatusMessage").text = status_name
+        if validation_messages:
+            for validation_message in validation_messages:
+                ET.SubElement(creation_state, "StatusMessage").text = validation_message
+
+        ET.SubElement(creation_state, "SequenceNumber").text = "1"
         shipment_number = ET.SubElement(creation_state, "ShipmentNumber")
         ET.SubElement(shipment_number, f"{{{namespaces['cis']}}}shipmentNumber").text = shipmentNo
 
@@ -338,19 +360,20 @@ def rest_to_soap_data(response_statuscode, rest_data):
         piece_number = ET.SubElement(piece_information, "PieceNumber")
         ET.SubElement(piece_number, f"{{{namespaces['cis']}}}licensePlate").text = shipmentNo
 
-    # Labelurl
-    if labelUrl:
-        ET.SubElement(creation_state, "Labelurl").text = labelUrl
+        # Labelurl
+        if labelUrl:
+            ET.SubElement(creation_state, "Labelurl").text = labelUrl
 
     # Baum in eine Zeichenfolge umwandeln
     xml_str = ET.tostring(envelope, encoding="utf-8")
-    return xml_str
+    return xml_str.decode("utf-8")
 
 
-async def create_shipment(soap_request_data):
+async def create_shipment(soap_request_data, username, password):
     payload = soap_to_rest_data(soap_request_data)
     print(payload)
-    response = await make_rest_api_call(dhl_rest_api_orders_url, payload)
+    response = await make_rest_api_call(dhl_rest_api_orders_url, payload, username, password)
+    print(response.status_code)
     print(response.json())
     soap_response = rest_to_soap_data(response.status_code, response.json())
     print(soap_response)
@@ -361,6 +384,7 @@ async def create_shipment(soap_request_data):
 async def handle_soap_request(request: Request):
     soap_request_data = await request.body()
     soap_request_dict = xmltodict.parse(soap_request_data, encoding="utf-8")
+    logging.debug(f'SOAP Request: {json.dumps(soap_request_dict, indent=2)}')
 
     envelope = soap_request_dict.get("SOAP-ENV:Envelope")
     if not envelope:
@@ -374,8 +398,10 @@ async def handle_soap_request(request: Request):
     if not auth:
         raise HTTPException(status_code=400, detail="Invalid SOAP request: Authentification missing.")
 
-    username = auth.get("ns1:user")
-    password = auth.get("ns1:signature")
+    #username = auth.get("ns1:user")
+    #password = auth.get("ns1:signature")
+    username = None
+    password = None
 
     body = envelope.get("SOAP-ENV:Body")
     if not body:
@@ -384,7 +410,10 @@ async def handle_soap_request(request: Request):
     method_name, method_data = next(iter(body.items()))
 
     if method_name.endswith("CreateShipmentDDRequest"):
-        return await create_shipment(method_data)
+        logging.debug(f"SOAP Method: {method_name} - Wird verarbeitet.")
+        response = await create_shipment(method_data, username, password)
+        logging.debug(f"SOAP Response: {response}")
+        return response
     else:
         # Für alle anderen Methoden, die nicht unterstützt werden oder unbekannt sind
         raise HTTPException(status_code=400, detail=f"Unsupported SOAP method: {method_name}")
