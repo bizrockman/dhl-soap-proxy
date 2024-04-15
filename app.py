@@ -4,11 +4,12 @@ import xml.etree.ElementTree as ET
 import logging
 
 import pycountry
-from dotenv import load_dotenv
-
-from fastapi import FastAPI, HTTPException, Request, Response
 import httpx
 import xmltodict
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request, Response
+
 
 logging.basicConfig(
     filename='logs/my_app.log',  # Pfad zur Log-Datei
@@ -17,15 +18,22 @@ logging.basicConfig(
     level=logging.DEBUG  # Minimallevel für die Erfassung von Nachrichten
 )
 
+
 load_dotenv()
 dhl_api_key = os.getenv('DHL_API_KEY')
-dhl_rest_api_base_url = os.getenv('DHL_REST_API_URL')
-dhl_rest_api_orders_url = f"{dhl_rest_api_base_url}orders"
-
-gkp_user = os.getenv('GKP_USER')
-gkp_password = os.getenv('GKP_PASSWORD')
-
 app = FastAPI()
+
+
+def get_rest_api_base_url(sandbox=False):
+    if sandbox:
+        return os.getenv('DHL_SANDBOX_REST_API_URL')
+    else:
+        return os.getenv('DHL_PRODUCTION_REST_API_URL')
+
+
+def get_rest_api_orders_url(sandbox=False):
+    dhl_rest_api_base_url = get_rest_api_base_url(sandbox)
+    return f"{dhl_rest_api_base_url}orders"
 
 
 @app.get("/")
@@ -33,7 +41,7 @@ async def test_dhl_api():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
-                dhl_rest_api_base_url,
+                get_rest_api_base_url(sandbox=True),
                 headers={
                     "accept": "application/json",
                     "dhl-api-key": dhl_api_key
@@ -53,34 +61,27 @@ async def test_dhl_api():
 @app.post("/test/create-shipment")
 async def create_test_shipment(request: Request):
     payload = get_test_rest_object()
-    response = await make_rest_api_call(dhl_rest_api_orders_url, payload)
+    username = os.getenv('GKP_SANDBOX_USER')
+    password = os.getenv('GKP_SANDBOX_PASSWORD')
+    dhl_rest_api_orders_url = get_rest_api_orders_url(sandbox=True)
+    response = await make_rest_api_call(dhl_rest_api_orders_url, payload, username, password)
     print(response)
     return response
 
 
-async def make_rest_api_call(rest_api_url, payload, username=None, password=None):
+async def make_rest_api_call(rest_api_url, payload, username, password):
     headers = {
         "accept": "application/json",
         "Accept-Language": "de-DE",
         "Content-Type": "application/json",
         "dhl-api-key": dhl_api_key
     }
-
-    if username and password:
-        auth = (username, password)
-    else:
-        auth = (gkp_user, gkp_password)
+    auth = (username, password)
 
     async with httpx.AsyncClient() as client:
         response = await client.post(rest_api_url, json=payload, headers=headers, auth=auth,
                                      params={"validate": "False", "includeDocs": "URL", "printFormat": "910-300-700"})
         return response
-        #if response.status_code == 200:
-            # Gib die Antwort von DHL API zurück
-        #    return response.json()
-        #else:
-            # Bei einem Fehler gib den Statuscode und die Fehlermeldung zurück
-        #    return HTTPException(status_code=response.status_code, detail=response.text)
 
 
 def get_test_rest_object():
@@ -131,7 +132,7 @@ def get_iso3_from_iso2(country_iso2_code):
         raise ValueError("Invalid country ISO2 code.")
 
 
-def soap_to_rest_data(xml_data):
+def soap_to_rest_data(xml_data, sandbox=False):
     shipment_order = xml_data.get("ShipmentOrder")
     if not shipment_order:
         raise HTTPException(status_code=400, detail="Invalid SOAP request: ShipmentOrder missing.")
@@ -234,16 +235,21 @@ def soap_to_rest_data(xml_data):
         }
     }
 
+    if sandbox:
+        ekp = os.getenv('EKP_TEST')
+    else:
+        ekp = os.getenv('EKP')
+
     product_code = shipment_details.get('ProductCode')
     if product_code == 'EPN':  # DHL Paket
         product_code = 'V01PAK'
-        billing_number = os.getenv('DHL_BILLING_NUMBER_NAT')
+        billing_number = ekp + os.getenv('DHL_BILLING_NUMBER_NAT_PREFIX')
     elif product_code == 'BPI':  # Weltpaket
         product_code = 'V53WPAK'
-        billing_number = os.getenv('DHL_BILLING_NUMBER_INTL')
+        billing_number = ekp + os.getenv('DHL_BILLING_NUMBER_INTL_PREFIX')
     elif product_code == 'EPI':  # Europaket
         product_code = 'V54EPAK'
-        billing_number = os.getenv('DHL_BILLING_NUMBER_INTL')
+        billing_number = ekp + os.getenv('DHL_BILLING_NUMBER_INTL_PREFIX')
     else:
         raise HTTPException(status_code=400, detail="Invalid SOAP request: Product code missing or not valid.")
 
@@ -268,7 +274,7 @@ def soap_to_rest_data(xml_data):
 def rest_to_soap_data(response_statuscode, rest_data):
 
     status = rest_data.get("status")
-    if status:
+    if status and isinstance(status, dict):
         status_name = status.get("title").lower()
     else:
         status_name = rest_data.get("title").lower()
@@ -277,7 +283,6 @@ def rest_to_soap_data(response_statuscode, rest_data):
 
     if response_statuscode == 200:
         status_code = "0"
-
     elif response_statuscode == 401:
         if 'unauthorized' in status_name:
             status_code = "1001"
@@ -366,11 +371,12 @@ def rest_to_soap_data(response_statuscode, rest_data):
 
     # Baum in eine Zeichenfolge umwandeln
     xml_str = ET.tostring(envelope, encoding="utf-8")
-    return xml_str  # xml_str.decode("utf-8")
+    return xml_str
 
 
-async def create_shipment(soap_request_data, username, password):
-    payload = soap_to_rest_data(soap_request_data)
+async def create_shipment(soap_request_data, username, password, sandbox=False):
+    dhl_rest_api_orders_url = get_rest_api_orders_url(sandbox=sandbox)
+    payload = soap_to_rest_data(soap_request_data, sandbox)
     print(payload)
     response = await make_rest_api_call(dhl_rest_api_orders_url, payload, username, password)
     print(response.status_code)
@@ -380,11 +386,22 @@ async def create_shipment(soap_request_data, username, password):
     return soap_response
 
 
-@app.post("/soap")
-async def handle_soap_request(request: Request):
+@app.post("/production/soap")
+async def handle_production_soap_request(request: Request):
+    response = await handle_soap_request(request, sandbox=False)
+    return response
+
+
+@app.post("/sandbox/soap")
+async def handle_sandbox_soap_request(request: Request):
+    response = await handle_soap_request(request, sandbox=True)
+    return response
+
+
+async def handle_soap_request(request: Request, sandbox=False):
     soap_request_data = await request.body()
     soap_request_dict = xmltodict.parse(soap_request_data, encoding="utf-8")
-    logging.debug(f'SOAP Request DATA: {json.dumps(soap_request_dict, indent=2)}')
+    logging.debug(f"SOAP Request DATA: {json.dumps(soap_request_dict, indent=2)}")
 
     envelope = soap_request_dict.get("SOAP-ENV:Envelope")
     if not envelope:
@@ -398,10 +415,15 @@ async def handle_soap_request(request: Request):
     if not auth:
         raise HTTPException(status_code=400, detail="Invalid SOAP request: Authentification missing.")
 
-    #username = auth.get("ns1:user")
-    #password = auth.get("ns1:signature")
-    username = None
-    password = None
+    if sandbox:
+        username = os.getenv('GKP_SANDBOX_USER')
+        password = os.getenv('GKP_SANDBOX_PASSWORD')
+    else:
+        username = auth.get("ns1:user")
+        password = auth.get("ns1:signature")
+        if not username and not password:
+            username = os.getenv('GKP_USER')
+            password = os.getenv('GKP_PASSWORD')
 
     body = envelope.get("SOAP-ENV:Body")
     if not body:
@@ -411,7 +433,7 @@ async def handle_soap_request(request: Request):
 
     if method_name.endswith("CreateShipmentDDRequest"):
         logging.debug(f"SOAP Method: {method_name} - Wird verarbeitet.")
-        response_data = await create_shipment(method_data, username, password)
+        response_data = await create_shipment(method_data, username, password, sandbox=sandbox)
         logging.debug(f"SOAP Response DATA: {response_data}")
     else:
         # Für alle anderen Methoden, die nicht unterstützt werden oder unbekannt sind
