@@ -205,6 +205,13 @@ def soap_to_rest_data(xml_data, sandbox=False):
         else:
             consignee['name3'] = additional_address_information
 
+    care_of_name = receiver.get('Address').get('ns1:careOfName', '')
+    if care_of_name:
+        if not consignee.get("name2"):
+            consignee['name2'] = care_of_name
+        else:
+            consignee['name3'] = care_of_name
+
     postal_code_german_destination = receiver['Address']['ns1:Zip'].get('ns1:germany')
     if postal_code_german_destination:
         postal_code = postal_code_german_destination
