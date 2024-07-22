@@ -61,12 +61,14 @@ async def test_dhl_api():
 @app.post("/test/create-shipment")
 async def create_test_shipment(request: Request):
     payload = get_test_rest_object()
+    print(payload)
     username = os.getenv('GKP_SANDBOX_USER')
     password = os.getenv('GKP_SANDBOX_PASSWORD')
+    print(username, password)
     dhl_rest_api_orders_url = get_rest_api_orders_url(sandbox=True)
     response = await make_rest_api_call(dhl_rest_api_orders_url, payload, username, password)
-    print(response)
-    return response
+    print(response.content)
+    return response.content
 
 
 async def make_rest_api_call(rest_api_url, payload, username, password):
@@ -104,8 +106,10 @@ def get_test_rest_object():
                 },
                 "consignee": {
                     "name1": "Maria Musterfrau",
+                    "name2": "c/o Musterfirma",
+                    "name3": "Frau Super",
                     "addressStreet": "Kurt-Schumacher-Str. 20",
-                    "additionalAddressInformation1": "Apartment 107",
+                    "additionalAddressInformation2": "Apartment 107",
                     "postalCode": "53113",
                     "city": "Bonn",
                     "country": "DEU",
@@ -185,7 +189,7 @@ def soap_to_rest_data(xml_data, sandbox=False):
             if inner_company.get("ns1:name2"):
                 consignee["name2"] = inner_company.get("ns1:name2")
         elif inner_person:
-            consignee["name1"] = inner_person.get("ns1:firstname",'') + " " + inner_person.get("ns1:lastname", '')
+            consignee["name1"] = inner_person.get("ns1:firstname", '') + " " + inner_person.get("ns1:lastname", '')
         else:
             raise HTTPException(status_code=400, detail="Invalid SOAP request: Inner Company / Person missing.")
     else:
@@ -196,7 +200,10 @@ def soap_to_rest_data(xml_data, sandbox=False):
     consignee['addressHouse'] = receiver.get('Address').get('ns1:streetNumber', '')
     additional_address_information = receiver.get('Address').get('ns1:additionalAddressInformation', '')
     if additional_address_information:
-        consignee['additionalAddressInformation'] = additional_address_information
+        if not consignee.get("name2"):
+            consignee['name2'] = additional_address_information
+        else:
+            consignee['name3'] = additional_address_information
 
     postal_code_german_destination = receiver['Address']['ns1:Zip'].get('ns1:germany')
     if postal_code_german_destination:
@@ -220,7 +227,12 @@ def soap_to_rest_data(xml_data, sandbox=False):
 
     consignee['contactName'] = receiver['Communication']['ns1:contactPerson']
     if consignee['contactName'] and len(consignee['contactName']) < 3:
-        consignee['contactName'] = consignee['name1']
+        #consignee['contactName'] = consignee['name1']
+        if not consignee.get("name2"):
+            consignee['name2'] = consignee['contactName']
+        else:
+            consignee['name3'] = consignee['contactName']
+        del(consignee['contactName'])
     consignee['phone'] = receiver['Communication']['ns1:phone']
 
     if 'Packstation' in consignee['addressStreet']:
