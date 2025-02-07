@@ -307,18 +307,22 @@ def soap_to_rest_data(xml_data, sandbox=False):
         raise HTTPException(status_code=400, detail="Invalid SOAP request: Country ISO code missing or not valid.")
 
     consignee['contactName'] = receiver['Communication']['ns1:contactPerson']
-    if consignee['contactName'] and len(consignee['contactName']) > 3:
-        #consignee['contactName'] = consignee['name1']
+    if consignee.get('contactName') and len(consignee['contactName']) > 3:
+        # consignee['contactName'] = consignee['name1']
         if not consignee.get("name2"):
             consignee['name2'] = consignee['contactName']
         else:
             consignee['name3'] = consignee['contactName']
-        del(consignee['contactName'])
+        #del (consignee['contactName'])
+
     consignee['phone'] = receiver['Communication']['ns1:phone']
 
-    if 'Packstation' in consignee['addressStreet']:
-        consignee['name2'] = consignee['contactName']
-        del(consignee['contactName'])
+    #    if 'Packstation' in consignee['addressStreet']:
+    #        consignee['name2'] = consignee['contactName']
+    #        del(consignee['contactName'])
+
+    if consignee.get('contactName') and len(consignee['contactName']) < 3:
+        del (consignee['contactName'])
 
         # Details
     details = {
