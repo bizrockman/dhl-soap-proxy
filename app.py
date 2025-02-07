@@ -42,7 +42,7 @@ async def test_dhl_api():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
-                get_rest_api_base_url(sandbox=False),
+                get_rest_api_base_url(sandbox=True),
                 headers={
                     "accept": "application/json",
                     "dhl-api-key": dhl_api_key
@@ -62,6 +62,7 @@ async def test_dhl_api():
 @app.post("/test/create-shipment")
 async def create_test_shipment(request: Request):
     payload = get_test_rest_object(package_type='klp')
+    print(payload)
     username = os.getenv('GKP_SANDBOX_USER')
     password = os.getenv('GKP_SANDBOX_PASSWORD')
     dhl_rest_api_orders_url = get_rest_api_orders_url(sandbox=True)
@@ -262,7 +263,7 @@ def soap_to_rest_data(xml_data, sandbox=False):
             if inner_company.get("ns1:name2"):
                 consignee["name2"] = inner_company.get("ns1:name2")
         elif inner_person:
-            consignee["name1"] = inner_person.get("ns1:firstname",'') + " " + inner_person.get("ns1:lastname", '')
+            consignee["name1"] = inner_person.get("ns1:firstname", '') + " " + inner_person.get("ns1:lastname", '')
         else:
             raise HTTPException(status_code=400, detail="Invalid SOAP request: Inner Company / Person missing.")
     else:
@@ -273,7 +274,17 @@ def soap_to_rest_data(xml_data, sandbox=False):
     consignee['addressHouse'] = receiver.get('Address').get('ns1:streetNumber', '')
     additional_address_information = receiver.get('Address').get('ns1:additionalAddressInformation', '')
     if additional_address_information:
-        consignee['additionalAddressInformation'] = additional_address_information
+        if not consignee.get("name2"):
+            consignee['name2'] = additional_address_information
+        else:
+            consignee['name3'] = additional_address_information
+
+    care_of_name = receiver.get('Address').get('ns1:careOfName', '')
+    if care_of_name:
+        if not consignee.get("name2"):
+            consignee['name2'] = care_of_name
+        else:
+            consignee['name3'] = care_of_name
 
     postal_code_german_destination = receiver['Address']['ns1:Zip'].get('ns1:germany')
     if postal_code_german_destination:
@@ -296,8 +307,13 @@ def soap_to_rest_data(xml_data, sandbox=False):
         raise HTTPException(status_code=400, detail="Invalid SOAP request: Country ISO code missing or not valid.")
 
     consignee['contactName'] = receiver['Communication']['ns1:contactPerson']
-    if consignee['contactName'] and len(consignee['contactName']) < 3:
-        consignee['contactName'] = consignee['name1']
+    if consignee['contactName'] and len(consignee['contactName']) > 3:
+        #consignee['contactName'] = consignee['name1']
+        if not consignee.get("name2"):
+            consignee['name2'] = consignee['contactName']
+        else:
+            consignee['name3'] = consignee['contactName']
+        del(consignee['contactName'])
     consignee['phone'] = receiver['Communication']['ns1:phone']
 
     if 'Packstation' in consignee['addressStreet']:
