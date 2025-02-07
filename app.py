@@ -9,6 +9,7 @@ import xmltodict
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 
 logging.basicConfig(
@@ -41,7 +42,7 @@ async def test_dhl_api():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
-                get_rest_api_base_url(sandbox=True),
+                get_rest_api_base_url(sandbox=False),
                 headers={
                     "accept": "application/json",
                     "dhl-api-key": dhl_api_key
@@ -60,12 +61,13 @@ async def test_dhl_api():
 
 @app.post("/test/create-shipment")
 async def create_test_shipment(request: Request):
-    payload = get_test_rest_object()
+    payload = get_test_rest_object(package_type='klp')
     username = os.getenv('GKP_SANDBOX_USER')
     password = os.getenv('GKP_SANDBOX_PASSWORD')
     dhl_rest_api_orders_url = get_rest_api_orders_url(sandbox=True)
     response = await make_rest_api_call(dhl_rest_api_orders_url, payload, username, password)
-    print(response)
+    print(response.json())
+    response = JSONResponse(content=response.json())
     return response
 
 
@@ -84,43 +86,118 @@ async def make_rest_api_call(rest_api_url, payload, username, password):
         return response
 
 
-def get_test_rest_object():
-    payload = {
-        "profile": "STANDARD_GRUPPENPROFIL",
-        "shipments": [
-            {
-                "product": "V01PAK",
-                "billingNumber": "33333333330102",
-                "refNo": "Order No. 1234",
-                "shipper": {
-                    "name1": "My Online Shop GmbH",
-                    "addressStreet": "Sträßchensweg 10",
-                    "additionalAddressInformation1": "2. Etage",
-                    "postalCode": "53113",
-                    "city": "Bonn",
-                    "country": "DEU",
-                    "email": "max@mustermann.de",
-                    "phone": "+49 123456789"
-                },
-                "consignee": {
-                    "name1": "Maria Musterfrau",
-                    "addressStreet": "Kurt-Schumacher-Str. 20",
-                    "additionalAddressInformation1": "Apartment 107",
-                    "postalCode": "53113",
-                    "city": "Bonn",
-                    "country": "DEU",
-                    "email": "maria@musterfrau.de",
-                    "phone": "+49 987654321"
-                },
-                "details": {
-                    "weight": {
-                        "uom": "g",
-                        "value": 500
+def get_test_rest_object(package_type='nat'):
+    if package_type == 'nat':
+        payload = {
+            "profile": "STANDARD_GRUPPENPROFIL",
+            "shipments": [
+                {
+                    "product": "V01PAK",
+                    "billingNumber": "33333333330102",
+                    "refNo": "Order No. 1234",
+                    "shipper": {
+                        "name1": "My Online Shop GmbH",
+                        "addressStreet": "Sträßchensweg 10",
+                        "additionalAddressInformation1": "2. Etage",
+                        "postalCode": "53113",
+                        "city": "Bonn",
+                        "country": "DEU",
+                        "email": "max@mustermann.de",
+                        "phone": "+49 123456789"
+                    },
+                    "consignee": {
+                        "name1": "Maria Musterfrau",
+                        "addressStreet": "Kurt-Schumacher-Str. 20",
+                        "additionalAddressInformation1": "Apartment 107",
+                        "postalCode": "53113",
+                        "city": "Bonn",
+                        "country": "DEU",
+                        "email": "maria@musterfrau.de",
+                        "phone": "+49 987654321"
+                    },
+                    "details": {
+                        "weight": {
+                            "uom": "g",
+                            "value": 500
+                        }
                     }
                 }
-            }
-        ]
-    }
+            ]
+        }
+    elif package_type == 'klp':
+        payload = {
+            "profile": "STANDARD_GRUPPENPROFIL",
+            "shipments": [
+                {
+                    "product": "V62KP",
+                    "billingNumber": "33333333336201",
+                    "refNo": "Order No. 1234",
+                    "shipper": {
+                        "name1": "My Online Shop GmbH",
+                        "addressStreet": "Sträßchensweg 10",
+                        "additionalAddressInformation1": "2. Etage",
+                        "postalCode": "53113",
+                        "city": "Bonn",
+                        "country": "DEU",
+                        "email": "max@mustermann.de",
+                        "phone": "+49 123456789"
+                    },
+                    "consignee": {
+                        "name1": "Maria Musterfrau",
+                        "addressStreet": "Kurt-Schumacher-Str. 20",
+                        "additionalAddressInformation1": "Apartment 107",
+                        "postalCode": "53113",
+                        "city": "Bonn",
+                        "country": "DEU",
+                        "email": "maria@musterfrau.de",
+                        "phone": "+49 987654321"
+                    },
+                    "details": {
+                        "weight": {
+                            "uom": "g",
+                            "value": 500
+                        }
+                    }
+                }
+            ]
+        }
+    else:
+        payload = {
+            "profile": "STANDARD_GRUPPENPROFIL",
+            "shipments": [
+                {
+                    "product": "V62KP",
+                    "billingNumber": "33333333336202",
+                    "refNo": "Order No. 1234",
+                    "shipper": {
+                        "name1": "My Online Shop GmbH",
+                        "addressStreet": "Sträßchensweg 10",
+                        "additionalAddressInformation1": "2. Etage",
+                        "postalCode": "53113",
+                        "city": "Bonn",
+                        "country": "DEU",
+                        "email": "max@mustermann.de",
+                        "phone": "+49 123456789"
+                    },
+                    "consignee": {
+                        "name1": "Maria Musterfrau",
+                        "addressStreet": "Kurt-Schumacher-Str. 20",
+                        "additionalAddressInformation1": "Apartment 107",
+                        "postalCode": "53113",
+                        "city": "Bonn",
+                        "country": "DEU",
+                        "email": "maria@musterfrau.de",
+                        "phone": "+49 987654321"
+                    },
+                    "details": {
+                        "weight": {
+                            "uom": "g",
+                            "value": 500
+                        }
+                    }
+                }
+            ]
+        }
     return payload
 
 
@@ -250,6 +327,9 @@ def soap_to_rest_data(xml_data, sandbox=False):
     elif product_code == 'EPI':  # Europaket
         product_code = 'V54EPAK'
         billing_number = ekp + os.getenv('DHL_BILLING_NUMBER_INTL_PREFIX')
+    elif product_code == 'KLP':  # Kleinpaket
+        product_code = 'V62KP'
+        billing_number = ekp + os.getenv('DHL_BILLING_NUMBER_KLP_PREFIX')
     else:
         raise HTTPException(status_code=400, detail="Invalid SOAP request: Product code missing or not valid.")
 
