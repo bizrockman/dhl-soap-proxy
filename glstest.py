@@ -6,6 +6,7 @@ from requests import Session
 import urllib3
 import logging.config
 from dotenv import load_dotenv
+import fitz
 
 
 # logging.config.dictConfig({
@@ -34,7 +35,7 @@ urllib3.disable_warnings()
 
 
 def get_label():
-    wsdl_url = "https://shipit-wbm-de06.gls-group.eu:443/backend/ShipmentProcessingService/ShipmentProcessingPortType?wsdl"
+    wsdl_url = os.getenv("GLS_SOAP_API_URL")
 
     session = Session()
     session.headers.update({
@@ -101,4 +102,31 @@ def get_label():
 
 if __name__ == "__main__":
     load_dotenv()
-    get_label()
+    # get_label()
+
+    original = fitz.open("label.pdf")
+    page = original[0]
+
+    # Extra margins in points (1 cm = 28.3465 pt)
+    margin_left = 2.8 * 28.3465
+    margin_top = 2 * 28.3465
+
+    label_width = 15.0 * 28.3465  # 15 cm in points
+    label_height = 20.8 * 28.3465  # 10 cm in points
+
+    old_width, old_height = page.rect.width, page.rect.height
+    new_width = old_width + margin_left
+    new_height = old_height + margin_top
+
+    # Create new PDF with larger page size
+    output = fitz.open()
+    new_page = output.new_page(height=label_height, width=label_width)
+
+    # Insert the original page content at the offset defined by the margins
+    new_page.show_pdf_page(
+        fitz.Rect(margin_left, margin_top, old_width + margin_left, new_height),
+        original, 0
+    )
+
+    output.save("label_with_margin.pdf")
+    print("New PDF with margin saved as label_with_margin.pdf")

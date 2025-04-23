@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
+from zeep import Client
+from zeep.transports import Transport
+from requests import Session
+
 
 logging.basicConfig(
     filename='logs/my_app.log',  # Pfad zur Log-Datei
@@ -210,6 +214,73 @@ def get_iso3_from_iso2(country_iso2_code):
         raise ValueError("Invalid country ISO2 code.")
 
 
+def create_gls_soap_client(gls_soap_api_url) -> Client:
+    session = Session()
+    session.headers.update({
+        "Authorization": "Basic " + os.getenv("GLS_AUTH"),
+        "Requester": "bizness rocket GmbH"
+    })
+    session.verify = False
+
+    client = Client(wsdl=gls_soap_api_url, transport=Transport(session=session))
+
+    return client
+
+
+def soap_to_gls_soap_data(gls_client, soap_request_data):
+    factory = gls_client.type_factory("ns0")
+    common = gls_client.type_factory("ns1")
+
+    consignee = common.Consignee(Address=common.Address(
+        Name1="Max Mustermann",
+        Street="Musterstraße",
+        StreetNumber="12",
+        ZIPCode="12345",
+        City="Musterstadt",
+        CountryCode="DE"
+    ))
+
+    # Adresse Versender (ContactID nötig!)
+    shipper = common.Shipper(ContactID=os.getenv("GLS_CLIENT_ID"))
+
+    # Paketinhalt
+    shipment_unit = factory.ShipmentUnit(Weight=1.5)
+
+    # Gesamt-Sendung
+    shipment = factory.Shipment(
+        Product='Parcel',
+        Consignee=consignee,
+        Shipper=shipper,
+        ShipmentUnit=[shipment_unit]
+    )
+
+    return shipment
+
+
+def make_gls_soap_call(gls_client, gls_soap_payload, sandbox=False):
+    factory = gls_client.type_factory("ns0")
+
+    # Druckoptionen
+    printing_options = factory.PrintingOptions(
+        ReturnLabels=factory.ReturnLabels(
+            TemplateSet="NONE",
+            LabelFormat="PDF"
+        )
+    )
+
+    try:
+        # service = client.bind("ShipmentProcessingPortType", "ShipmentProcessingServiceSoapBinding")
+        service = gls_client.service
+        result = service.createParcels(
+            Shipment=gls_soap_payload,
+            PrintingOptions=printing_options
+        )
+
+        return result
+    except Exception as e:
+        print("Fehler beim Erstellen des Versandlabels:", str(e))
+
+
 def soap_to_rest_data(xml_data, sandbox=False):
     shipment_order = xml_data.get("ShipmentOrder")
     if not shipment_order:
@@ -398,13 +469,13 @@ def rest_to_soap_data(response_statuscode, rest_data):
             validation_message = validation_message.get('validationMessage')
 
     items = rest_data.get("items")
+    label_url = None
+    shipment_no = None
 
     if items:
-        shipmentNo = items[0].get("shipmentNo")
+        shipment_no = items[0].get("shipmentNo")
         if items[0].get("label"):
-            labelUrl = rest_data.get("items")[0].get("label").get("url")
-        else:
-            labelUrl = None
+            label_url = rest_data.get("items")[0].get("label").get("url")
 
         if items[0].get("validationMessages"):
             for validation_message in items[0].get("validationMessages"):
@@ -458,23 +529,59 @@ def rest_to_soap_data(response_statuscode, rest_data):
 
         ET.SubElement(creation_state, "SequenceNumber").text = "1"
         shipment_number = ET.SubElement(creation_state, "ShipmentNumber")
-        ET.SubElement(shipment_number, f"{{{namespaces['cis']}}}shipmentNumber").text = shipmentNo
+        ET.SubElement(shipment_number, f"{{{namespaces['cis']}}}shipmentNumber").text = shipment_no
 
         # PieceInformation Element
         piece_information = ET.SubElement(creation_state, "PieceInformation")
         piece_number = ET.SubElement(piece_information, "PieceNumber")
-        ET.SubElement(piece_number, f"{{{namespaces['cis']}}}licensePlate").text = shipmentNo
+        ET.SubElement(piece_number, f"{{{namespaces['cis']}}}licensePlate").text = shipment_no
 
         # Labelurl
-        if labelUrl:
-            ET.SubElement(creation_state, "Labelurl").text = labelUrl
+        if label_url:
+            ET.SubElement(creation_state, "Labelurl").text = label_url
 
     # Baum in eine Zeichenfolge umwandeln
     xml_str = ET.tostring(envelope, encoding="utf-8")
     return xml_str
 
 
+def get_carrier_code_from_product_code(xml_data):
+    shipment_order = xml_data.get("ShipmentOrder")
+    if not shipment_order:
+        raise HTTPException(status_code=400, detail="Invalid SOAP request: ShipmentOrder missing.")
+
+    shipment = shipment_order.get("Shipment")
+    if not shipment:
+        raise HTTPException(status_code=400, detail="Invalid SOAP request: Shipment missing.")
+
+    shipment_details = shipment.get("ShipmentDetails")
+    if not shipment_details:
+        raise HTTPException(status_code=400, detail="Invalid SOAP request: ShipmentDetails missing.")
+
+    product_code = shipment_details.get('ProductCode')
+    return product_code
+
+
 async def create_shipment(soap_request_data, username, password, sandbox=False):
+    carrier = get_carrier_code_from_product_code(soap_request_data)
+
+    if carrier == 'GLS':
+        soap_response = await create_gls_shipment(soap_request_data, username, password, sandbox=sandbox)
+    else:
+        soap_response = await create_dhl_shipment(soap_request_data, username, password, sandbox=sandbox)
+    return soap_response
+
+
+async def create_gls_shipment(soap_request_data, username, password, sandbox=False):
+    gls_soap_api_url = os.getenv('GLS_SOAP_API_URL')
+    gls_client = create_gls_soap_client(gls_soap_api_url)
+    gls_soap_payload = soap_to_gls_soap_data(gls_client, soap_request_data)
+    gls_soap_response = make_gls_soap_call(gls_client, gls_soap_payload, sandbox=sandbox)
+    soap_response = gls_soap_to_soap_data(gls_soap_response)
+    return soap_response
+
+
+async def create_dhl_shipment(soap_request_data, username, password, sandbox=False):
     dhl_rest_api_orders_url = get_rest_api_orders_url(sandbox=sandbox)
     payload = soap_to_rest_data(soap_request_data, sandbox)
     print(payload)
@@ -484,7 +591,6 @@ async def create_shipment(soap_request_data, username, password, sandbox=False):
     soap_response = rest_to_soap_data(response.status_code, response.json())
     print(soap_response)
     return soap_response
-
 
 @app.post("/production/soap")
 async def handle_production_soap_request(request: Request):

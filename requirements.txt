@@ -4,3 +4,7 @@ httpx
 uvicorn
 xmltodict
 pycountry
+zeep
+requests
+urllib3
+PyMuPDF
