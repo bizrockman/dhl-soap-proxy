@@ -32,7 +32,7 @@ async def health_check(request: Request):
     return {"base_url": base_url, "status": "ok"}
 
 @app.get("/")
-async def test_dhl_api():
+async def test_api():
     return await test_dhl_api()
 
 
