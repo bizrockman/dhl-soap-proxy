@@ -42,18 +42,23 @@ async def create_test_shipment(request: Request):
 
 
 @app.get("/label/gls/{filename}")
-async def download_label(file_name: str):
-    file_path = os.path.join("/tmp/labels", file_name)
+async def download_label(filename: str):
+    file_path = os.path.join(os.getenv("GLS_LABELS_FOLDER", 'labels'), filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path, media_type='application/pdf', filename=file_name)
+    return FileResponse(file_path, media_type='application/pdf', filename=filename)
 
 
-async def create_shipment(soap_request_data, username, password, sandbox=False):
+async def create_shipment(soap_request_data, username, password, sandbox=False, origin_request=None):
     carrier = get_carrier_code_from_product_code(soap_request_data)
 
     if carrier == 'GLS':
-        soap_response = await create_gls_shipment(soap_request_data, username, password, sandbox=sandbox)
+        base_url = None
+        if origin_request:
+            base_url = origin_request.base_url
+        if base_url is None:
+            raise HTTPException(status_code=400, detail="Base URL is required for GLS shipment.")
+        soap_response = await create_gls_shipment(soap_request_data, base_url, sandbox=sandbox)
     else:
         soap_response = await create_dhl_shipment(soap_request_data, username, password, sandbox=sandbox)
     return soap_response
@@ -123,7 +128,7 @@ async def handle_soap_request(request: Request, sandbox=False):
 
     if method_name.endswith("CreateShipmentDDRequest"):
         logging.debug(f"SOAP Method: {method_name} - Wird verarbeitet.")
-        response_data = await create_shipment(method_data, username, password, sandbox=sandbox)
+        response_data = await create_shipment(method_data, username, password, sandbox=sandbox, origin_request=request)
         logging.debug(f"SOAP Response DATA: {response_data}")
     else:
         # Für alle anderen Methoden, die nicht unterstützt werden oder unbekannt sind
